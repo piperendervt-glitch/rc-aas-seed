@@ -12,7 +12,7 @@ RC+AAS（Rational Controller + Adaptive Artificial Synapse）
    pipe_render（村下 勝真）の承認なしに行ってはならない
 
 2. **スケールアップは設計上の目的ではない**
-   「制御不能なAIへの抑止」が唯一の目的であり
+   「AIの制御可能性を構造として保証する」ことが目的であり
    スケールしないことが設計原則に組み込まれている
 
 3. **constitution.mdは変更禁止**
@@ -21,8 +21,8 @@ RC+AAS（Rational Controller + Adaptive Artificial Synapse）
 
 ## 設計思想
 
-> 「いたずらにAIの能力を追求するのではなく、
->  制御不能なAIの抑止を目的としてAI開発を行う」
+> 「能力のスケールより制御可能性の保証を優先し、
+>  人間が構造として関与できるAI設計を追求する」
 
 詳細：[constitution.md](./constitution.md) を参照
 

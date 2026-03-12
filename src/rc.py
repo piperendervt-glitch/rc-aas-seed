@@ -151,7 +151,7 @@ class RC:
                                 f" 人間の確認を要請。"
                             )
                         })
-                        print(f"[RC] ⚠️  封印レベル1に自動移行。seal_level=1")
+                        print(f"[RC] [SEAL] 封印レベル1に自動移行。seal_level=1")
             else:
                 self.cutoff_counters[arm_id] = 0  # 急性はリセット
                 self.cutoff_pending_counters[arm_id] = 0  # 回復したらpendingもリセット

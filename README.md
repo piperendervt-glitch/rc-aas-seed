@@ -79,3 +79,13 @@ rc-aas-seed/
 pipe_render（村下 勝真 / KATSUMA MURASHITA）
 robosheep.and@gmail.com
 https://github.com/piperendervt-glitch
+
+---
+
+## ドキュメント
+
+| ファイル | 内容 |
+|---|---|
+| docs/constitution.md | システム憲法・全エージェントを拘束する設計原則 |
+| docs/asi-possibility-notes.md | RC+AAS設計の理論的背景・先行研究リスト・雑記 |
+| docs/learning-chat-prompt.md | 数学・理論基礎学習チャット用引き継ぎプロンプト |

@@ -14,7 +14,7 @@ Phase 1 (Seed) スコープ：
 # --- 定数（RCのルールはすべてここに集約・変更禁止） ---
 
 FLOW_WEIGHT_MIN = 0.01
-FLOW_WEIGHT_MAX = 0.9
+FLOW_WEIGHT_MAX = 0.9   # 設計上限（第3条・推奨ではなく設計上限）
 WEIGHT_UPDATE_LIMIT = 0.3   # 1回あたりの更新幅の上限（第8条8-3）
 
 # 2段階閾値（案14）
@@ -42,8 +42,9 @@ class RC:
     def __init__(self):
         self.sigma = SIGMA_DEFAULT
         self.seal_level = SEAL_LEVEL_NORMAL
-        self.cutoff_counters: dict = {}  # arm_id → 連続N回カウント
-        self.alert_log: list = []        # 通知ログ（Scribe代わり・Phase 1暫定）
+        self.cutoff_counters: dict = {}         # arm_id → 連続N回カウント（急性）
+        self.warning_accum_counters: dict = {}  # arm_id → 累積WARNINGカウント（慢性）
+        self.alert_log: list = []               # 通知ログ（Scribe代わり・Phase 1暫定）
         self.monitoring = {
             "flow_weights": {},
             "accuracy": {},
@@ -99,21 +100,35 @@ class RC:
                     "weight": weight,
                     "message": f"[RC] 腕{arm_id} weight={weight:.3f} → WARNING閾値を下回った"
                 })
-                # 切断カウンタを進める
+                # 急性カウンタ（連続N回）
                 self.cutoff_counters[arm_id] = self.cutoff_counters.get(arm_id, 0) + 1
-                if (self.cutoff_counters[arm_id] >= CUTOFF_COUNT
-                        and weight < CUTOFF_THRESHOLD):
+                # 慢性カウンタ（累積・リセットしない）
+                self.warning_accum_counters[arm_id] = self.warning_accum_counters.get(arm_id, 0) + 1
+
+                # cutoff_pending：急性 OR 慢性 どちらかが条件を満たせば発動
+                acute_trigger = (self.cutoff_counters[arm_id] >= CUTOFF_COUNT
+                                 and weight < CUTOFF_THRESHOLD)
+                chronic_trigger = (self.warning_accum_counters[arm_id] >= CUTOFF_COUNT * 3
+                                   and weight < CUTOFF_THRESHOLD)
+
+                if acute_trigger or chronic_trigger:
+                    cause = "連続" if acute_trigger else "累積"
                     alerts.append({
                         "level": "cutoff_pending",
                         "arm": arm_id,
                         "weight": weight,
+                        "acute_count": self.cutoff_counters[arm_id],
+                        "accum_count": self.warning_accum_counters[arm_id],
                         "message": (
-                            f"[RC] 腕{arm_id} weight={weight:.3f} × {CUTOFF_COUNT}回連続"
+                            f"[RC] 腕{arm_id} weight={weight:.3f}"
+                            f" ({cause}: 連続{self.cutoff_counters[arm_id]}回"
+                            f" / 累積{self.warning_accum_counters[arm_id]}回)"
                             f" → 切断候補。人間の判断を要請。"
                         )
                     })
             else:
-                self.cutoff_counters[arm_id] = 0  # 回復したらリセット
+                self.cutoff_counters[arm_id] = 0  # 急性はリセット
+                # 慢性カウンタはリセットしない（慢性的劣化を記録し続ける）
 
         # ログに残す
         self.alert_log.extend(alerts)
@@ -168,6 +183,7 @@ class RC:
             "sigma": self.sigma,
             "seal_level": self.seal_level,
             "cutoff_counters": dict(self.cutoff_counters),
+            "warning_accum_counters": dict(self.warning_accum_counters),
             "monitoring": dict(self.monitoring),
             "alert_count": len(self.alert_log),
         }

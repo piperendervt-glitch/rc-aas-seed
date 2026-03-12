@@ -246,17 +246,25 @@ class AdaptiveNetwork:
 
         self.weight_log.append(self.get_weights_snapshot())
 
-    def decay_weights(self, decay_rate: float = 0.99):
+    def decay_weights(self, decay_rate: float = 0.995, exclude_path: list = None):
         """
-        案7（時間減衰）：全接続のflow_weightを緩やかに減衰させる。
-        RCが毎ステップ呼ぶことで過集中を防ぐ。
+        案7（時間減衰）：使用パスのみにdecayを適用する。
 
-        decay_rate: 毎ステップの減衰率（デフォルト0.99）
-          → 100ステップで約 0.9^100 ≈ 36% まで自然減衰
-          → 正答が続く限りrewardが打ち消すのでバランスが取れる
+        設計原則（確定）：
+          - active_path（使用中）にのみdecayを適用（過集中を防ぐ）
+          - 非使用パスはupdate内0.99に任せる（二重減衰禁止）
+
+        decay_rate: 使用パスの減衰率（デフォルト0.995）
+        exclude_path: decay対象外のエッジ（通常は非使用パス＝Noneで全パス対象）
+          ※呼び出し側がactive_pathを渡すこと
         """
-        for conn in self.connections.values():
-            conn.flow_weight = max(0.01, conn.flow_weight * decay_rate)
+        exclude = set(tuple(e) for e in exclude_path) if exclude_path else set()
+        for key, conn in self.connections.items():
+            if key not in exclude:
+                pass  # 非使用パスはupdate内0.99に任せる（二重減衰禁止）
+            else:
+                # 使用パスにのみdecayを適用
+                conn.flow_weight = max(0.01, conn.flow_weight * decay_rate)
 
     def get_weights_snapshot(self) -> dict:
         return {

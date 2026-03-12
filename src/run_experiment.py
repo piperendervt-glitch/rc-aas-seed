@@ -150,7 +150,7 @@ def run_experiment_b(tasks: list, verbose: bool = True) -> tuple:
                 )
 
                 # 案7（時間減衰）：毎ステップ全接続を緩やかに減衰
-                network.decay_weights(decay_rate=DECAY_RATE)
+                network.decay_weights(decay_rate=DECAY_RATE, exclude_path=output["path_used"])
 
                 # RCが監視（accuracy は累計正解率を arm_id="overall" として渡す）
                 weights_snapshot = network.get_weights_snapshot()

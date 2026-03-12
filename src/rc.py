@@ -14,7 +14,7 @@ Phase 1 (Seed) スコープ：
 # --- 定数（RCのルールはすべてここに集約・変更禁止） ---
 
 FLOW_WEIGHT_MIN = 0.01
-FLOW_WEIGHT_MAX = 0.99
+FLOW_WEIGHT_MAX = 0.9
 WEIGHT_UPDATE_LIMIT = 0.3   # 1回あたりの更新幅の上限（第8条8-3）
 
 # 2段階閾値（案14）

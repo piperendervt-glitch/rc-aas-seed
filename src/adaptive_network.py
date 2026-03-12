@@ -75,7 +75,7 @@ class Connection:
 
         # w_new = w_old + α×reward + ε
         self.flow_weight = self.flow_weight + reward + epsilon
-        self.flow_weight = max(0.01, min(0.99, self.flow_weight))
+        self.flow_weight = max(0.01, min(0.9, self.flow_weight))
 
     def to_dict(self) -> dict:
         return {

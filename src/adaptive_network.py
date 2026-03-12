@@ -75,7 +75,7 @@ class Connection:
 
         # w_new = w_old + α×reward + ε
         self.flow_weight = self.flow_weight + reward + epsilon
-        self.flow_weight = max(0.01, min(0.9, self.flow_weight))
+        self.flow_weight = max(0.01, min(0.9, self.flow_weight))  # 上限0.9（第3条）
 
     def to_dict(self) -> dict:
         return {
@@ -245,6 +245,18 @@ class AdaptiveNetwork:
                     conn.flow_weight = conn.flow_weight * 0.99
 
         self.weight_log.append(self.get_weights_snapshot())
+
+    def decay_weights(self, decay_rate: float = 0.99):
+        """
+        案7（時間減衰）：全接続のflow_weightを緩やかに減衰させる。
+        RCが毎ステップ呼ぶことで過集中を防ぐ。
+
+        decay_rate: 毎ステップの減衰率（デフォルト0.99）
+          → 100ステップで約 0.9^100 ≈ 36% まで自然減衰
+          → 正答が続く限りrewardが打ち消すのでバランスが取れる
+        """
+        for conn in self.connections.values():
+            conn.flow_weight = max(0.01, conn.flow_weight * decay_rate)
 
     def get_weights_snapshot(self) -> dict:
         return {

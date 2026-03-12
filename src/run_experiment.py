@@ -18,7 +18,7 @@ sys.path.insert(0, str(Path(__file__).parent))
 from task_generator import generate_tasks
 from fixed_network import FixedNetwork
 from adaptive_network import AdaptiveNetwork
-from rc import RC
+from rc import RC, DECAY_RATE
 
 
 RESULTS_DIR = Path(__file__).parent.parent / "results"
@@ -148,6 +148,9 @@ def run_experiment_b(tasks: list, verbose: bool = True) -> tuple:
                     used_feedback=output["used_feedback"],
                     sigma=rc.get_sigma(),
                 )
+
+                # 案7（時間減衰）：毎ステップ全接続を緩やかに減衰
+                network.decay_weights(decay_rate=DECAY_RATE)
 
                 # RCが監視（accuracy は累計正解率を arm_id="overall" として渡す）
                 weights_snapshot = network.get_weights_snapshot()

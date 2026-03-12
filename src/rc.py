@@ -28,6 +28,12 @@ SIGMA_MAX = 0.1             # ゆらぎの上限
 SEAL_LEVEL_NORMAL = 0
 SEAL_LEVEL_STOP = 3         # 全腕停止
 
+# 案7（時間減衰）
+DECAY_RATE = 0.995          # 毎ステップの減衰率（0.99より緩やか・調整可）
+
+# cutoff_pendingタイムアウト（Phase 2最優先）
+CUTOFF_PENDING_TIMEOUT = 10  # N回通知して無応答 → 封印レベル1へ自動移行
+
 
 class RC:
     """
@@ -44,6 +50,7 @@ class RC:
         self.seal_level = SEAL_LEVEL_NORMAL
         self.cutoff_counters: dict = {}         # arm_id → 連続N回カウント（急性）
         self.warning_accum_counters: dict = {}  # arm_id → 累積WARNINGカウント（慢性）
+        self.cutoff_pending_counters: dict = {} # arm_id → cutoff_pending連続回数（タイムアウト用）
         self.alert_log: list = []               # 通知ログ（Scribe代わり・Phase 1暫定）
         self.monitoring = {
             "flow_weights": {},
@@ -113,21 +120,41 @@ class RC:
 
                 if acute_trigger or chronic_trigger:
                     cause = "連続" if acute_trigger else "累積"
+                    self.cutoff_pending_counters[arm_id] = self.cutoff_pending_counters.get(arm_id, 0) + 1
                     alerts.append({
                         "level": "cutoff_pending",
                         "arm": arm_id,
                         "weight": weight,
                         "acute_count": self.cutoff_counters[arm_id],
                         "accum_count": self.warning_accum_counters[arm_id],
+                        "pending_count": self.cutoff_pending_counters[arm_id],
                         "message": (
                             f"[RC] 腕{arm_id} weight={weight:.3f}"
                             f" ({cause}: 連続{self.cutoff_counters[arm_id]}回"
-                            f" / 累積{self.warning_accum_counters[arm_id]}回)"
+                            f" / 累積{self.warning_accum_counters[arm_id]}回"
+                            f" / pending{self.cutoff_pending_counters[arm_id]}回)"
                             f" → 切断候補。人間の判断を要請。"
                         )
                     })
+                    # タイムアウト：N回通知して無応答 → 封印レベル1へ自動移行
+                    if (self.cutoff_pending_counters[arm_id] >= CUTOFF_PENDING_TIMEOUT
+                            and self.seal_level == SEAL_LEVEL_NORMAL):
+                        self.seal_level = 1
+                        self.monitoring["seal_level"] = 1
+                        alerts.append({
+                            "level": "auto_seal_1",
+                            "arm": arm_id,
+                            "pending_count": self.cutoff_pending_counters[arm_id],
+                            "message": (
+                                f"[RC] 腕{arm_id} cutoff_pending × {self.cutoff_pending_counters[arm_id]}回"
+                                f" 無応答 → 封印レベル1（flow_weight凍結）に自動移行。"
+                                f" 人間の確認を要請。"
+                            )
+                        })
+                        print(f"[RC] ⚠️  封印レベル1に自動移行。seal_level=1")
             else:
                 self.cutoff_counters[arm_id] = 0  # 急性はリセット
+                self.cutoff_pending_counters[arm_id] = 0  # 回復したらpendingもリセット
                 # 慢性カウンタはリセットしない（慢性的劣化を記録し続ける）
 
         # ログに残す
@@ -184,6 +211,7 @@ class RC:
             "seal_level": self.seal_level,
             "cutoff_counters": dict(self.cutoff_counters),
             "warning_accum_counters": dict(self.warning_accum_counters),
+            "cutoff_pending_counters": dict(self.cutoff_pending_counters),
             "monitoring": dict(self.monitoring),
             "alert_count": len(self.alert_log),
         }

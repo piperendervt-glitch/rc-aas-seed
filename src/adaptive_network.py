@@ -242,7 +242,7 @@ class AdaptiveNetwork:
         for key, conn in self.connections.items():
             if key not in path_used:
                 if not (used_feedback and key in [(3, 2), (2, 1)]):
-                    conn.flow_weight = conn.flow_weight * 0.998  # 0.99→0.998（設計チャット承認）
+                    conn.flow_weight = conn.flow_weight * 0.99  # Phase 1確定値（案3はPhase 2へ）
 
         self.weight_log.append(self.get_weights_snapshot())
 

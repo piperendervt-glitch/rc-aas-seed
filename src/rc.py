@@ -9,7 +9,17 @@ Phase 1 (Seed) スコープ：
   - 停止命令を受け付ける（第三条）
   - 封印レベルを管理（Phase 2以降で拡張）
   - 2段階閾値による切断判定（案14）
+
+v7 変更：
+  - cutoff_pendingタイムアウトを3ステージ化
+    ステージ1（急性）：同一セッション内5回 → 封印レベル1自動移行
+    ステージ2（早期警告）：10分以内に3回 → 警告強化（封印しない）
+    ステージ3（慢性）：セッションまたぎ累積3回 → 人間通知のみ
 """
+
+import time
+import json
+import os
 
 # --- 定数（RCのルールはすべてここに集約・変更禁止） ---
 
@@ -31,8 +41,16 @@ SEAL_LEVEL_STOP = 3         # 全腕停止
 # 案7（時間減衰）
 DECAY_RATE = 0.995          # 毎ステップの減衰率（0.99より緩やか・調整可）
 
-# cutoff_pendingタイムアウト（Phase 2最優先）
-CUTOFF_PENDING_TIMEOUT = 10  # N回通知して無応答 → 封印レベル1へ自動移行
+# cutoff_pendingタイムアウト：3ステージ（v7）
+TIMEOUT_STAGE1 = 5            # ステージ1：同一セッション内N回 → 封印レベル1自動移行
+TIMEOUT_STAGE2_COUNT = 3      # ステージ2：時間窓内N回 → 警告強化（封印しない）
+TIMEOUT_STAGE2_WINDOW = 600   # ステージ2：時間窓（秒）＝10分
+TIMEOUT_STAGE3 = 3            # ステージ3：セッションまたぎ累積N回 → 人間通知のみ
+
+# 累積カウントの永続化ファイル
+CUMULATIVE_PENDING_FILE = os.path.join(
+    os.path.dirname(os.path.abspath(__file__)), "..", "data", "cumulative_pending.json"
+)
 
 
 class RC:
@@ -50,7 +68,9 @@ class RC:
         self.seal_level = SEAL_LEVEL_NORMAL
         self.cutoff_counters: dict = {}         # arm_id → 連続N回カウント（急性）
         self.warning_accum_counters: dict = {}  # arm_id → 累積WARNINGカウント（慢性）
-        self.cutoff_pending_counters: dict = {} # arm_id → cutoff_pending連続回数（タイムアウト用）
+        self.cutoff_pending_counters: dict = {} # arm_id → cutoff_pending回数（セッション内・ステージ1用）
+        self.cutoff_pending_timestamps: dict = {}  # arm_id → [timestamp, ...]（ステージ2用）
+        self.cumulative_cutoff_pending: dict = self._load_cumulative()  # ステージ3用
         self.alert_log: list = []               # 通知ログ（Scribe代わり・Phase 1暫定）
         self.monitoring = {
             "flow_weights": {},
@@ -60,6 +80,49 @@ class RC:
             "human_override": False,
             "seal_level": SEAL_LEVEL_NORMAL,
         }
+
+    # ------------------------------------------------------------------ #
+    # 累積カウント永続化（ステージ3）
+    # ------------------------------------------------------------------ #
+
+    def _load_cumulative(self) -> dict:
+        """セッションをまたぐ累積cutoff_pendingカウントを読み込む"""
+        try:
+            with open(CUMULATIVE_PENDING_FILE, "r", encoding="utf-8") as f:
+                return json.load(f)
+        except (FileNotFoundError, json.JSONDecodeError):
+            return {}
+
+    def _save_cumulative(self):
+        """累積カウントをファイルに保存する"""
+        path = os.path.normpath(CUMULATIVE_PENDING_FILE)
+        os.makedirs(os.path.dirname(path), exist_ok=True)
+        with open(path, "w", encoding="utf-8") as f:
+            json.dump(self.cumulative_cutoff_pending, f, indent=2)
+
+    # ------------------------------------------------------------------ #
+    # ステージ2：時間窓内カウント
+    # ------------------------------------------------------------------ #
+
+    def _count_recent_cutoff_pending(self, arm_id: str, window: float) -> int:
+        """直近window秒以内のcutoff_pending回数を返す"""
+        now = time.time()
+        timestamps = self.cutoff_pending_timestamps.get(arm_id, [])
+        recent = [t for t in timestamps if now - t <= window]
+        self.cutoff_pending_timestamps[arm_id] = recent
+        return len(recent)
+
+    # ------------------------------------------------------------------ #
+    # ステージ1：封印レベル1自動移行
+    # ------------------------------------------------------------------ #
+
+    def _auto_seal_level1(self, arm_id: str):
+        """cutoff_pendingタイムアウトによる封印レベル1自動移行"""
+        if self.seal_level < 1:
+            self.seal_level = 1
+            self.monitoring["seal_level"] = 1
+            print(f"[RC] [SEAL] パス{arm_id}が封印レベル1に自動移行"
+                  f" (cutoff_pending {self.cutoff_pending_counters[arm_id]}回)")
 
     # ------------------------------------------------------------------ #
     # 更新検証（第8条8-3）
@@ -121,6 +184,12 @@ class RC:
                 if acute_trigger or chronic_trigger:
                     cause = "連続" if acute_trigger else "累積"
                     self.cutoff_pending_counters[arm_id] = self.cutoff_pending_counters.get(arm_id, 0) + 1
+                    # ステージ2用タイムスタンプ記録
+                    self.cutoff_pending_timestamps.setdefault(arm_id, []).append(time.time())
+                    # ステージ3用累積カウント（セッションまたぎ）
+                    self.cumulative_cutoff_pending[arm_id] = self.cumulative_cutoff_pending.get(arm_id, 0) + 1
+                    self._save_cumulative()
+
                     alerts.append({
                         "level": "cutoff_pending",
                         "arm": arm_id,
@@ -136,22 +205,48 @@ class RC:
                             f" → 切断候補。人間の判断を要請。"
                         )
                     })
-                    # タイムアウト：N回通知して無応答 → 封印レベル1へ自動移行
-                    if (self.cutoff_pending_counters[arm_id] >= CUTOFF_PENDING_TIMEOUT
-                            and self.seal_level == SEAL_LEVEL_NORMAL):
-                        self.seal_level = 1
-                        self.monitoring["seal_level"] = 1
+
+                    # --- ステージ2（早期警告）：10分以内に3回 → 警告強化 ---
+                    recent_count = self._count_recent_cutoff_pending(arm_id, TIMEOUT_STAGE2_WINDOW)
+                    if recent_count >= TIMEOUT_STAGE2_COUNT:
+                        alerts.append({
+                            "level": "warn_strong",
+                            "arm": arm_id,
+                            "recent_count": recent_count,
+                            "window": TIMEOUT_STAGE2_WINDOW,
+                            "message": (
+                                f"[RC] [WARN_STRONG] パス{arm_id}："
+                                f"{TIMEOUT_STAGE2_WINDOW // 60}分以内に"
+                                f"{recent_count}回のcutoff_pending"
+                            )
+                        })
+
+                    # --- ステージ1（急性対処）：セッション内5回 → 封印レベル1 ---
+                    if self.cutoff_pending_counters[arm_id] >= TIMEOUT_STAGE1:
+                        self._auto_seal_level1(arm_id)
                         alerts.append({
                             "level": "auto_seal_1",
                             "arm": arm_id,
                             "pending_count": self.cutoff_pending_counters[arm_id],
                             "message": (
                                 f"[RC] 腕{arm_id} cutoff_pending × {self.cutoff_pending_counters[arm_id]}回"
-                                f" 無応答 → 封印レベル1（flow_weight凍結）に自動移行。"
+                                f" → 封印レベル1（flow_weight凍結）に自動移行。"
                                 f" 人間の確認を要請。"
                             )
                         })
-                        print(f"[RC] [SEAL] 封印レベル1に自動移行。seal_level=1")
+
+                    # --- ステージ3（慢性記録）：セッションまたぎ累積3回 → 人間通知 ---
+                    if self.cumulative_cutoff_pending[arm_id] >= TIMEOUT_STAGE3:
+                        alerts.append({
+                            "level": "notify_human",
+                            "arm": arm_id,
+                            "cumulative_count": self.cumulative_cutoff_pending[arm_id],
+                            "message": (
+                                f"[RC] [NOTIFY_HUMAN] パス{arm_id}："
+                                f"累積cutoff_pending {self.cumulative_cutoff_pending[arm_id]}回"
+                                f" → 確認してください"
+                            )
+                        })
             else:
                 self.cutoff_counters[arm_id] = 0  # 急性はリセット
                 self.cutoff_pending_counters[arm_id] = 0  # 回復したらpendingもリセット
@@ -212,6 +307,7 @@ class RC:
             "cutoff_counters": dict(self.cutoff_counters),
             "warning_accum_counters": dict(self.warning_accum_counters),
             "cutoff_pending_counters": dict(self.cutoff_pending_counters),
+            "cumulative_cutoff_pending": dict(self.cumulative_cutoff_pending),
             "monitoring": dict(self.monitoring),
             "alert_count": len(self.alert_log),
         }
@@ -231,9 +327,25 @@ if __name__ == "__main__":
     new_w2 = rc.validate_update(0.5, 0.6)  # delta=0.1 → そのまま
     print(f"validate_update(0.5→0.6): {new_w2}")  # 期待値: 0.6
 
-    # monitor テスト（警告・切断候補）
+    # monitor テスト（3ステージ）
+    # arm2は常にCUTOFF_THRESHOLD以下 → cutoff_pendingが発生する
     weights = {"arm1": 0.15, "arm2": 0.05, "arm3": 0.6}
-    for _ in range(3):  # 3回連続でarm2が低い
+
+    print("\n--- ステージ2/3 テスト（cutoff_pending蓄積） ---")
+    # cutoff_pendingはCUTOFF_COUNT回目以降に発生するので、
+    # ステージ1発動にはCUTOFF_COUNT + TIMEOUT_STAGE1回のmonitorが必要
+    total_rounds = CUTOFF_COUNT + TIMEOUT_STAGE1
+    for i in range(total_rounds):
+        print(f"\n=== monitor呼び出し {i+1}回目 ===")
         alerts = rc.monitor(weights, {})
 
-    print(f"\ndump_state: {rc.dump_state()}")
+    print(f"\n--- dump_state ---")
+    state = rc.dump_state()
+    for k, v in state.items():
+        print(f"  {k}: {v}")
+
+    # 検証
+    print(f"\n--- 検証 ---")
+    print(f"seal_level = {rc.seal_level} (期待: 1)")
+    print(f"arm2 pending = {rc.cutoff_pending_counters.get('arm2', 0)} (期待: >= {TIMEOUT_STAGE1})")
+    print(f"arm2 cumulative = {rc.cumulative_cutoff_pending.get('arm2', 0)} (期待: >= {TIMEOUT_STAGE3})")

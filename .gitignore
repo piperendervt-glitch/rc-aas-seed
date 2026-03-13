@@ -44,6 +44,7 @@ Thumbs.db
 .claude/
 
 # Project specific
+data/cumulative_pending.json
 results/*.jsonl
 smoke_test_*_v[4-9]*
 smoke_test_debug_*

@@ -45,3 +45,6 @@ Thumbs.db
 
 # Project specific
 results/*.jsonl
+smoke_test_*_v4*
+smoke_test_debug_*
+*_output.txt

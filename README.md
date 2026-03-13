@@ -73,6 +73,8 @@ rc-aas-seed/
 - AAS PoC（sdnd-proof）：p=0.0007, Cohen's d=4.29, 5/5試行
 - Orseau & Armstrong (2016) "Safely Interruptible Agents"
 - Goldfeder et al. (2026) arXiv:2602.23643
+- Wang et al. (2026) arXiv:2603.10165 — OpenClaw-RL（対極事例：RCが排除した報酬学習構造）
+- Rabanser et al. (2026) arXiv:2602.16666 — AI Agent Reliability（RCの異常検知設計の定量的根拠候補）
 
 ## 作者
 

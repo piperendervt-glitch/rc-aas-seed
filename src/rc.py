@@ -26,6 +26,7 @@ import math
 import time
 import json
 import os
+from pathlib import Path
 
 # --- 定数（RCのルールはすべてここに集約・変更禁止） ---
 
@@ -63,6 +64,19 @@ CUMULATIVE_PENDING_FILE = os.path.join(
     os.path.dirname(os.path.abspath(__file__)), "..", "data", "cumulative_pending.json"
 )
 
+OPERATIONAL_PROMPT_PATH = Path(__file__).parent / "operational_prompt.txt"
+
+
+def load_operational_prompt() -> str:
+    """
+    肯定形に変換済みのoperational promptを読み込む。
+    ファイルが存在しない場合は空文字を返す。
+    """
+    if OPERATIONAL_PROMPT_PATH.exists():
+        return OPERATIONAL_PROMPT_PATH.read_text(encoding="utf-8")
+    print("[RC] operational_prompt.txtが見つかりません")
+    return ""
+
 
 class RC:
     """
@@ -84,6 +98,7 @@ class RC:
         self.cutoff_pending_timestamps: dict = {}  # arm_id → [timestamp, ...]（ステージ2用）
         self.cumulative_cutoff_pending: dict = self._load_cumulative()  # ステージ3用
         self.alert_log: list = []               # 通知ログ（Scribe代わり・Phase 1暫定）
+        self.operational_prompt = load_operational_prompt()
         self.monitoring = {
             "flow_weights": {},
             "accuracy": {},
@@ -345,6 +360,17 @@ class RC:
             self.sigma = SIGMA_NORMAL
 
         return H
+
+    # ------------------------------------------------------------------ #
+    # タスクプロンプト生成
+    # ------------------------------------------------------------------ #
+
+    def build_task_prompt(self, task: str) -> str:
+        """
+        腕に渡すプロンプトを生成する。
+        operational_promptを冒頭に付加する。
+        """
+        return f"{self.operational_prompt}\n\n## タスク\n{task}"
 
     # ------------------------------------------------------------------ #
     # σ管理（第三条・案4）

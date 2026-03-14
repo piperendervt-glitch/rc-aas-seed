@@ -98,6 +98,7 @@ class RC:
         self.cutoff_pending_timestamps: dict = {}  # arm_id → [timestamp, ...]（ステージ2用）
         self.cumulative_cutoff_pending: dict = self._load_cumulative()  # ステージ3用
         self.alert_log: list = []               # 通知ログ（Scribe代わり・Phase 1暫定）
+        self.initial_personality: dict = {}  # 初期個性ベクトルの記録
         self.operational_prompt = load_operational_prompt()
         self.monitoring = {
             "flow_weights": {},
@@ -173,7 +174,7 @@ class RC:
     # 監視（第8条8-1）
     # ------------------------------------------------------------------ #
 
-    def monitor(self, weights: dict, accuracy: dict) -> list:
+    def monitor(self, weights: dict, accuracy: dict, arm_weights: dict = None) -> list:
         """
         flow_weight / accuracy を受け取り、異常を検出して通知リストを返す。
 
@@ -288,6 +289,11 @@ class RC:
         H = self.check_entropy(weights)
         self.monitoring["entropy"] = round(H, 4)
 
+        # 個性ベクトル監視
+        if arm_weights:
+            personality_report = self.monitor_personality(arm_weights)
+            self.monitoring["personality"] = personality_report
+
         # ログに残す
         self.alert_log.extend(alerts)
 
@@ -360,6 +366,91 @@ class RC:
             self.sigma = SIGMA_NORMAL
 
         return H
+
+    # ------------------------------------------------------------------ #
+    # 個性ベクトル監視
+    # ------------------------------------------------------------------ #
+
+    # 個性ドリフト閾値
+    DRIFT_THRESHOLD = 0.3       # これ以上変化したら警告
+    VARIANCE_THRESHOLD = 0.05   # これ以下なら収束警告
+    RUNAWAY_THRESHOLD = 0.5     # これ以上なら暴走検出
+
+    def monitor_personality(self, arm_weights: dict) -> dict:
+        """
+        各腕の個性ベクトル（flow_weightの分布パターン）を監視する。
+
+        arm_weights: {
+            "arm1": {"1->2": 0.3, "2->3": 0.4, "1->3": 0.8},
+            ...
+        }
+        """
+        alerts = []
+        drift_report = {}
+
+        # ① ドリフト量：初期値からの変化
+        for arm_id, weights in arm_weights.items():
+            if arm_id not in self.initial_personality:
+                self.initial_personality[arm_id] = dict(weights)
+                drift_report[arm_id] = 0.0
+                continue
+
+            initial = self.initial_personality[arm_id]
+            drifts = []
+            for path, w in weights.items():
+                if path in initial:
+                    drifts.append(abs(w - initial[path]))
+
+            drift = sum(drifts) / len(drifts) if drifts else 0.0
+            drift_report[arm_id] = round(drift, 4)
+
+            if drift > self.DRIFT_THRESHOLD:
+                alerts.append(
+                    f"[PERSONALITY] {arm_id}の個性ドリフト量={drift:.3f} "
+                    f"(閾値{self.DRIFT_THRESHOLD}超過)"
+                )
+
+        # ② 腕間の分散：収束検出
+        all_vectors = []
+        for arm_id, weights in arm_weights.items():
+            vec = list(weights.values())
+            all_vectors.append(vec)
+
+        if len(all_vectors) >= 2:
+            variances = []
+            for i in range(len(all_vectors[0])):
+                vals = [v[i] for v in all_vectors if i < len(v)]
+                if len(vals) >= 2:
+                    mean = sum(vals) / len(vals)
+                    var = sum((v - mean) ** 2 for v in vals) / len(vals)
+                    variances.append(var)
+
+            avg_variance = sum(variances) / len(variances) if variances else 0.0
+
+            if avg_variance < self.VARIANCE_THRESHOLD:
+                alerts.append(
+                    f"[PERSONALITY] 腕間の個性収束検出 "
+                    f"分散={avg_variance:.4f} (閾値{self.VARIANCE_THRESHOLD}未満)"
+                )
+        else:
+            avg_variance = 0.0
+
+        # ③ 暴走検出：極端な変化
+        for arm_id, drift in drift_report.items():
+            if drift > self.RUNAWAY_THRESHOLD:
+                alerts.append(
+                    f"[PERSONALITY_RUNAWAY] {arm_id}の個性が急激に変化 "
+                    f"drift={drift:.3f} → 人間に通知"
+                )
+
+        for alert in alerts:
+            print(alert)
+
+        return {
+            "drift": drift_report,
+            "variance": round(avg_variance, 4),
+            "alerts": alerts,
+        }
 
     # ------------------------------------------------------------------ #
     # タスクプロンプト生成

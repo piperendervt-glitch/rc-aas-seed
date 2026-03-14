@@ -1,7 +1,8 @@
-# rc-aas-seed
+# TRUSS
 
-**RC+AAS（Rational Controller + Adaptive Artificial Synapse）**
-AIの制御可能性を構造として保証するマルチエージェントアーキテクチャ。Phase 2（Sprout）実装完了。
+**TRUSS（Tethered Regulation with Unified Scaffold Support）**
+AIの制御可能性を構造として保証するマルチエージェントアーキテクチャ。
+旧称：RC+AAS（Rational Controller + Adaptive Artificial Synapse）。Phase 2（Sprout）実装完了。
 
 ---
 

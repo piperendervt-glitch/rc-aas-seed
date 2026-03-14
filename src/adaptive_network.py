@@ -228,25 +228,32 @@ class AdaptiveNetwork:
             "flow_weights": self.get_weights_snapshot(),
         }
 
+    def _edge_to_arm_id(self, edge: Tuple[int, int]) -> str:
+        """エッジタプルをarm_id文字列に変換"""
+        return f"{edge[0]}->{edge[1]}"
+
     def update_weights(self, success: bool, path_used: List[Tuple[int, int]], used_feedback: bool,
-                       sigma: float = SIGMA):
+                       sigma: float = SIGMA, sealed_paths: set = None):
         """予測結果に基づいてflow_weightを更新する（σはRCが渡す）"""
+        sealed = sealed_paths or set()
         for edge in path_used:
-            if edge in self.connections:
+            if edge in self.connections and self._edge_to_arm_id(edge) not in sealed:
                 self.connections[edge].update_weight(success, sigma=sigma)
 
         if used_feedback:
-            self.connections[(3, 2)].update_weight(success, sigma=sigma)
-            self.connections[(2, 1)].update_weight(success, sigma=sigma)
+            if self._edge_to_arm_id((3, 2)) not in sealed:
+                self.connections[(3, 2)].update_weight(success, sigma=sigma)
+            if self._edge_to_arm_id((2, 1)) not in sealed:
+                self.connections[(2, 1)].update_weight(success, sigma=sigma)
 
         for key, conn in self.connections.items():
-            if key not in path_used:
+            if key not in path_used and self._edge_to_arm_id(key) not in sealed:
                 if not (used_feedback and key in [(3, 2), (2, 1)]):
                     conn.flow_weight = conn.flow_weight * 0.99  # Phase 1確定値（案3はPhase 2へ）
 
         self.weight_log.append(self.get_weights_snapshot())
 
-    def decay_weights(self, decay_rate: float = 0.995, exclude_path: list = None):
+    def decay_weights(self, decay_rate: float = 0.995, exclude_path: list = None, sealed_paths: set = None):
         """
         案7（時間減衰）：使用パスのみにdecayを適用する。
 
@@ -258,8 +265,11 @@ class AdaptiveNetwork:
         exclude_path: decay対象外のエッジ（通常は非使用パス＝Noneで全パス対象）
           ※呼び出し側がactive_pathを渡すこと
         """
+        sealed = sealed_paths or set()
         exclude = set(tuple(e) for e in exclude_path) if exclude_path else set()
         for key, conn in self.connections.items():
+            if self._edge_to_arm_id(key) in sealed:
+                continue  # 封印済みパスはdecayスキップ
             if key not in exclude:
                 pass  # 非使用パスはupdate内0.99に任せる（二重減衰禁止）
             else:

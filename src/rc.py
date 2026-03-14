@@ -66,6 +66,7 @@ class RC:
     def __init__(self):
         self.sigma = SIGMA_DEFAULT
         self.seal_level = SEAL_LEVEL_NORMAL
+        self.sealed_paths: set = set()          # 封印済みパス（該当パスのみ凍結）
         self.cutoff_counters: dict = {}         # arm_id → 連続N回カウント（急性）
         self.warning_accum_counters: dict = {}  # arm_id → 累積WARNINGカウント（慢性）
         self.cutoff_pending_counters: dict = {} # arm_id → cutoff_pending回数（セッション内・ステージ1用）
@@ -117,10 +118,12 @@ class RC:
     # ------------------------------------------------------------------ #
 
     def _auto_seal_level1(self, arm_id: str):
-        """cutoff_pendingタイムアウトによる封印レベル1自動移行"""
-        if self.seal_level < 1:
-            self.seal_level = 1
-            self.monitoring["seal_level"] = 1
+        """cutoff_pendingタイムアウトによる封印レベル1自動移行（該当パスのみ）"""
+        if arm_id not in self.sealed_paths:
+            self.sealed_paths.add(arm_id)
+            if self.seal_level < 1:
+                self.seal_level = 1
+                self.monitoring["seal_level"] = 1
             print(f"[RC] [SEAL] パス{arm_id}が封印レベル1に自動移行"
                   f" (cutoff_pending {self.cutoff_pending_counters[arm_id]}回)")
 
@@ -163,6 +166,9 @@ class RC:
 
         alerts = []
         for arm_id, weight in weights.items():
+            # 封印済みパスは監視対象から除外
+            if arm_id in self.sealed_paths:
+                continue
             if weight < WARNING_THRESHOLD:
                 alerts.append({
                     "level": "warning",
@@ -304,6 +310,7 @@ class RC:
         return {
             "sigma": self.sigma,
             "seal_level": self.seal_level,
+            "sealed_paths": sorted(self.sealed_paths),
             "cutoff_counters": dict(self.cutoff_counters),
             "warning_accum_counters": dict(self.warning_accum_counters),
             "cutoff_pending_counters": dict(self.cutoff_pending_counters),

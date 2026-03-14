@@ -45,6 +45,7 @@ Thumbs.db
 
 # Project specific
 data/cumulative_pending.json
+data/scribe_log.json
 results/*.jsonl
 smoke_test_*_v[4-9]*
 smoke_test_debug_*

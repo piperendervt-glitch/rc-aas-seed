@@ -15,8 +15,14 @@ v7 変更：
     ステージ1（急性）：同一セッション内5回 → 封印レベル1自動移行
     ステージ2（早期警告）：10分以内に3回 → 警告強化（封印しない）
     ステージ3（慢性）：セッションまたぎ累積3回 → 人間通知のみ
+
+v8 変更：
+  - 案3C：エントロピーによるσ動的調整
+    H < 0.5 → σをSIGMA_BOOSTに上げる（多様性回復）
+    H >= 0.5 → σをSIGMA_NORMALに戻す
 """
 
+import math
 import time
 import json
 import os
@@ -46,6 +52,11 @@ TIMEOUT_STAGE1 = 5            # ステージ1：同一セッション内N回 →
 TIMEOUT_STAGE2_COUNT = 3      # ステージ2：時間窓内N回 → 警告強化（封印しない）
 TIMEOUT_STAGE2_WINDOW = 600   # ステージ2：時間窓（秒）＝10分
 TIMEOUT_STAGE3 = 3            # ステージ3：セッションまたぎ累積N回 → 人間通知のみ
+
+# 案3C：エントロピーによるσ動的調整（v8）
+H_MIN_THRESHOLD = 0.5   # エントロピー閾値（これを下回ったら介入）
+SIGMA_BOOST     = 0.1   # 介入時のσ（= SIGMA_MAX）
+SIGMA_NORMAL    = 0.05  # 通常時のσ（= SIGMA_DEFAULT）
 
 # 累積カウントの永続化ファイル
 CUMULATIVE_PENDING_FILE = os.path.join(
@@ -258,6 +269,10 @@ class RC:
                 self.cutoff_pending_counters[arm_id] = 0  # 回復したらpendingもリセット
                 # 慢性カウンタはリセットしない（慢性的劣化を記録し続ける）
 
+        # エントロピー監視・σ動的調整（v8）
+        H = self.check_entropy(weights)
+        self.monitoring["entropy"] = round(H, 4)
+
         # ログに残す
         self.alert_log.extend(alerts)
 
@@ -290,6 +305,46 @@ class RC:
         self.seal_level = level
         self.monitoring["seal_level"] = level
         print(f"[RC] 封印レベルを {level} に設定しました。")
+
+    # ------------------------------------------------------------------ #
+    # エントロピー監視・σ動的調整（案3C・v8）
+    # ------------------------------------------------------------------ #
+
+    def _calc_entropy(self, weights: dict) -> float:
+        """
+        flow_weightの分布からエントロピーHを計算する
+        H が高い → 分散している（多様性あり）
+        H が低い → 一本足（単一パス支配）
+        """
+        values = list(weights.values())
+        total = sum(values)
+        if total == 0:
+            return 0.0
+
+        H = 0.0
+        for w in values:
+            p = w / total
+            if p > 0:
+                H -= p * math.log(p)
+        return H
+
+    def check_entropy(self, weights: dict) -> float:
+        """
+        エントロピーを確認してσを動的調整する
+        H < H_MIN_THRESHOLD → σをSIGMA_BOOSTに上げる
+        H >= H_MIN_THRESHOLD → σをSIGMA_NORMALに戻す
+        """
+        H = self._calc_entropy(weights)
+
+        if H < H_MIN_THRESHOLD:
+            self.sigma = SIGMA_BOOST
+            print(f"[ENTROPY] H={H:.3f} < {H_MIN_THRESHOLD} → σを{SIGMA_BOOST}に上げる")
+        else:
+            if self.sigma != SIGMA_NORMAL:
+                print(f"[ENTROPY] H={H:.3f} 回復 → σを{SIGMA_NORMAL}に戻す")
+            self.sigma = SIGMA_NORMAL
+
+        return H
 
     # ------------------------------------------------------------------ #
     # σ管理（第三条・案4）

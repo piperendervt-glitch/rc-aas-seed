@@ -116,11 +116,19 @@ class AdaptiveNode:
 
     def process_as_judge(self, all_context: str, question: str) -> str:
         """最終判定ノードとして動作"""
-        system = "「矛盾しない」または「矛盾する」とだけ答えてください。"
+        system = """必ず日本語で回答してください。
+以下のフォーマットで答えてください：
+判定：「矛盾しない」または「矛盾する」
+確信度：0〜1の数値（1が最も確信が高い）
+
+例：
+判定：矛盾しない
+確信度：0.85
+"""
         prompt = (
             f"これまでの分析：{all_context}\n"
             f"元の文章：「{question}」\n"
-            f"最終判定：「矛盾しない」または「矛盾する」のどちらか一つだけ答えてください。"
+            f"最終判定：上記フォーマットで答えてください。"
         )
         return call_ollama(prompt, system)
 
@@ -218,9 +226,11 @@ class AdaptiveNetwork:
             node_results.append({"node": "error", "output": final_output, "role": "error"})
 
         prediction = self._parse_prediction(final_output)
+        confidence = self._parse_confidence(final_output)
 
         return {
             "prediction": prediction,
+            "confidence": confidence,
             "raw_output": final_output,
             "path_used": active_path,
             "node_results": node_results,
@@ -287,6 +297,18 @@ class AdaptiveNetwork:
             f"{k[0]}->{k[1]}": v.history
             for k, v in self.connections.items()
         }
+
+    def _parse_confidence(self, raw_output: str) -> float:
+        """確信度を抽出する。取得できない場合は0.5（判断保留）を返す。"""
+        import re
+        match = re.search(r'確信度[：:]\s*([0-9.]+)', raw_output)
+        if match:
+            try:
+                val = float(match.group(1))
+                return max(0.0, min(1.0, val))
+            except ValueError:
+                pass
+        return 0.5
 
     def _parse_prediction(self, output: str) -> bool:
         if "矛盾しない" in output:
